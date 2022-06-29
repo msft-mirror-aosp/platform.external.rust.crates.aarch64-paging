@@ -11,7 +11,7 @@ use bitflags::bitflags;
 use core::alloc::Layout;
 use core::fmt::{self, Debug, Display, Formatter};
 use core::marker::PhantomData;
-use core::ops::Range;
+use core::ops::{Add, Range, Sub};
 use core::ptr::NonNull;
 
 const PAGE_SHIFT: usize = 12;
@@ -54,6 +54,22 @@ impl Debug for VirtualAddress {
     }
 }
 
+impl Sub for VirtualAddress {
+    type Output = usize;
+
+    fn sub(self, other: Self) -> Self::Output {
+        self.0 - other.0
+    }
+}
+
+impl Add<usize> for VirtualAddress {
+    type Output = Self;
+
+    fn add(self, other: usize) -> Self {
+        Self(self.0 + other)
+    }
+}
+
 /// A range of virtual addresses which may be mapped in a page table.
 #[derive(Clone, Eq, PartialEq)]
 pub struct MemoryRegion(Range<VirtualAddress>);
@@ -72,6 +88,22 @@ impl Display for PhysicalAddress {
 impl Debug for PhysicalAddress {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(f, "PhysicalAddress({})", self)
+    }
+}
+
+impl Sub for PhysicalAddress {
+    type Output = usize;
+
+    fn sub(self, other: Self) -> Self::Output {
+        self.0 - other.0
+    }
+}
+
+impl Add<usize> for PhysicalAddress {
+    type Output = Self;
+
+    fn add(self, other: usize) -> Self {
+        Self(self.0 + other)
     }
 }
 
@@ -118,6 +150,24 @@ impl MemoryRegion {
     /// Returns whether the memory region contains exactly 0 bytes.
     pub const fn is_empty(&self) -> bool {
         self.0.start.0 == self.0.end.0
+    }
+}
+
+impl From<Range<VirtualAddress>> for MemoryRegion {
+    fn from(range: Range<VirtualAddress>) -> Self {
+        Self::new(range.start.0, range.end.0)
+    }
+}
+
+impl Display for MemoryRegion {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}..{}", self.0.start, self.0.end)
+    }
+}
+
+impl Debug for MemoryRegion {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        Display::fmt(self, f)
     }
 }
 
@@ -240,8 +290,9 @@ bitflags! {
 /// implement `Debug` and `Drop`, as walking the page table hierachy requires knowing the starting
 /// level.
 struct PageTableWithLevel<T: Translation> {
-    table: NonNull<PageTable<T>>,
+    table: NonNull<PageTable>,
     level: usize,
+    _phantom_data: PhantomData<T>,
 }
 
 impl<T: Translation> PageTableWithLevel<T> {
@@ -253,6 +304,7 @@ impl<T: Translation> PageTableWithLevel<T> {
             // allocator, and the memory is zeroed which is valid initialisation for a PageTable.
             table: unsafe { allocate_zeroed() },
             level,
+            _phantom_data: PhantomData,
         }
     }
 
@@ -364,9 +416,8 @@ impl<T: Translation> Debug for PageTableWithLevel<T> {
 
 /// A single level of a page table.
 #[repr(C, align(4096))]
-struct PageTable<T: Translation> {
+struct PageTable {
     entries: [Descriptor; 1 << BITS_PER_LEVEL],
-    _phantom_data: PhantomData<T>,
 }
 
 /// An entry in a page table.
@@ -419,10 +470,11 @@ impl Descriptor {
         if level < LEAF_LEVEL && self.is_table_or_page() {
             if let Some(output_address) = self.output_address() {
                 let va = T::physical_to_virtual(output_address);
-                let ptr = va.0 as *mut PageTable<T>;
+                let ptr = va.0 as *mut PageTable;
                 return Some(PageTableWithLevel {
                     level: level + 1,
                     table: NonNull::new(ptr).expect("Subtable pointer must be non-null."),
+                    _phantom_data: PhantomData,
                 });
             }
         }
@@ -462,4 +514,67 @@ const fn align_down(value: usize, alignment: usize) -> usize {
 
 const fn align_up(value: usize, alignment: usize) -> usize {
     ((value - 1) | (alignment - 1)) + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::{format, string::ToString};
+
+    #[test]
+    fn display_memory_region() {
+        let region = MemoryRegion::new(0x1234, 0x56789);
+        assert_eq!(
+            &region.to_string(),
+            "0x0000000000001000..0x0000000000057000"
+        );
+        assert_eq!(
+            &format!("{:?}", region),
+            "0x0000000000001000..0x0000000000057000"
+        );
+    }
+
+    #[test]
+    fn subtract_virtual_address() {
+        let low = VirtualAddress(0x12);
+        let high = VirtualAddress(0x1234);
+        assert_eq!(high - low, 0x1222);
+    }
+
+    #[test]
+    #[should_panic]
+    fn subtract_virtual_address_overflow() {
+        let low = VirtualAddress(0x12);
+        let high = VirtualAddress(0x1234);
+
+        // This would overflow, so should panic.
+        let _ = low - high;
+    }
+
+    #[test]
+    fn add_virtual_address() {
+        assert_eq!(VirtualAddress(0x1234) + 0x42, VirtualAddress(0x1276));
+    }
+
+    #[test]
+    fn subtract_physical_address() {
+        let low = PhysicalAddress(0x12);
+        let high = PhysicalAddress(0x1234);
+        assert_eq!(high - low, 0x1222);
+    }
+
+    #[test]
+    #[should_panic]
+    fn subtract_physical_address_overflow() {
+        let low = PhysicalAddress(0x12);
+        let high = PhysicalAddress(0x1234);
+
+        // This would overflow, so should panic.
+        let _ = low - high;
+    }
+
+    #[test]
+    fn add_physical_address() {
+        assert_eq!(PhysicalAddress(0x1234) + 0x42, PhysicalAddress(0x1276));
+    }
 }
