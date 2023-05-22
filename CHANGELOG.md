@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0
+
+### Breaking changes
+
+- Updated `bitflags` to 2.0.2, which changes the API of `Attributes` a bit.
+- Updated `map_range` method to support mapping leaf page table entries without the `VALID` flag.
+  `Attributes::VALID` is no longer implicitly set when mapping leaf page table entries.
+
+### New features
+
+- Added `modify_range` method to `IdMap`, `LinearMap` and `Mapping` to update details of a mapped
+  range. This can be used e.g. to change flags for some range which is already mapped. As part of
+  this, the `Descriptor` struct was added to the public API.
+- Added `DBM` and software flags to `Attributes`.
+
 ## 0.3.0
 
 ### Breaking changes
