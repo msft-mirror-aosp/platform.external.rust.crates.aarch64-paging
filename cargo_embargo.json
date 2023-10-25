@@ -6,6 +6,9 @@
   ],
   "package": {
     "aarch64-paging": {
+      "alloc": true,
+      "no_std": true,
+      "force_rlib": true,
       "add_module_block": "cargo2android_module.bp"
     }
   },
